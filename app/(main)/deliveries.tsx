@@ -1,6 +1,6 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAgentStore } from '@/stores';
 import { Card, Badge, EmptyState, Button } from '@/components/ui';
@@ -17,7 +17,11 @@ export default function DeliveriesScreen() {
   const [activeTab, setActiveTab] = useState<Tab>('active');
   const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => { fetchAssignments(); }, []);
+  useFocusEffect(
+    useCallback(() => {
+      fetchAssignments();
+    }, [fetchAssignments])
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -25,27 +29,41 @@ export default function DeliveriesScreen() {
     setRefreshing(false);
   };
 
-  const filteredAssignments = assignments.filter((a) => {
-    if (activeTab === 'active') return a.status === AssignmentStatus.PICKED_UP || a.status === AssignmentStatus.IN_TRANSIT;
-    if (activeTab === 'pending') return a.status === AssignmentStatus.ASSIGNED;
-    return a.status === AssignmentStatus.DELIVERED || a.status === AssignmentStatus.FAILED;
-  });
+  const filteredAssignments = useMemo(() => {
+    return assignments.filter((a) => {
+      if (activeTab === 'active') return a.status === AssignmentStatus.PICKED_UP || a.status === AssignmentStatus.IN_TRANSIT;
+      if (activeTab === 'pending') return a.status === AssignmentStatus.ASSIGNED;
+      return a.status === AssignmentStatus.DELIVERED || a.status === AssignmentStatus.FAILED;
+    });
+  }, [assignments, activeTab]);
 
-  const handleAccept = async (id: string) => {
-    try { await updateAssignmentStatus(id, AssignmentStatus.PICKED_UP); } catch { /* handled */ }
-  };
+  const [error, setError] = useState<string | null>(null);
 
-  const handleDecline = async (id: string) => {
-    try { await updateAssignmentStatus(id, AssignmentStatus.FAILED, 'Declined by agent'); } catch { /* handled */ }
-  };
+  const handleAccept = useCallback(async (id: string) => {
+    try {
+      setError(null);
+      await updateAssignmentStatus(id, AssignmentStatus.PICKED_UP);
+    } catch {
+      setError('Failed to accept delivery. Please try again.');
+    }
+  }, [updateAssignmentStatus]);
 
-  const tabs: { key: Tab; label: string; count: number }[] = [
+  const handleDecline = useCallback(async (id: string) => {
+    try {
+      setError(null);
+      await updateAssignmentStatus(id, AssignmentStatus.FAILED, 'Declined by agent');
+    } catch {
+      setError('Failed to decline delivery. Please try again.');
+    }
+  }, [updateAssignmentStatus]);
+
+  const tabs = useMemo((): { key: Tab; label: string; count: number }[] => [
     { key: 'active', label: 'Active', count: assignments.filter((a) => a.status === AssignmentStatus.PICKED_UP || a.status === AssignmentStatus.IN_TRANSIT).length },
     { key: 'pending', label: 'Pending', count: assignments.filter((a) => a.status === AssignmentStatus.ASSIGNED).length },
-    { key: 'completed', label: 'Completed', count: assignments.filter((a) => a.status === AssignmentStatus.DELIVERED).length },
-  ];
+    { key: 'completed', label: 'Completed', count: assignments.filter((a) => a.status === AssignmentStatus.DELIVERED || a.status === AssignmentStatus.FAILED).length },
+  ], [assignments]);
 
-  const renderAssignment = ({ item }: { item: DeliveryAssignment }) => (
+  const renderAssignment = useCallback(({ item }: { item: DeliveryAssignment }) => (
     <Card style={styles.card}>
       <View style={styles.cardHeader}>
         <View style={styles.cardHeaderLeft}>
@@ -114,7 +132,7 @@ export default function DeliveriesScreen() {
         />
       ) : null}
     </Card>
-  );
+  ), [handleAccept, handleDecline, isLoading, router]);
 
   return (
     <View style={styles.container}>
@@ -139,6 +157,17 @@ export default function DeliveriesScreen() {
           </TouchableOpacity>
         ))}
       </View>
+
+      {/* Error Banner */}
+      {error && (
+        <View style={styles.errorBanner}>
+          <Ionicons name="alert-circle" size={16} color={Colors.error} />
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity onPress={() => setError(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="close" size={16} color={Colors.error} />
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* List */}
       <FlatList
@@ -208,5 +237,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'flex-end', gap: Layout.spacing.sm,
     marginTop: Layout.spacing.md, borderTopWidth: 1, borderTopColor: Colors.borderLight,
     paddingTop: Layout.spacing.md,
+  },
+
+  errorBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: Layout.spacing.sm,
+    backgroundColor: Colors.errorLight, marginHorizontal: Layout.padding.md,
+    marginTop: Layout.spacing.sm, padding: Layout.spacing.md,
+    borderRadius: Layout.radius.md,
+  },
+  errorText: {
+    flex: 1, fontSize: Layout.font.sm, color: Colors.error, fontWeight: '500',
   },
 });
